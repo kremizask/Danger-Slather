@@ -8,6 +8,7 @@ module Danger
   #       slather.configure("Path/to/my/project.xcodeproj", "MyScheme")
   #       slather.notify_if_coverage_is_less_than(minimum_coverage: 60)
   #       slather.notify_if_modified_file_is_less_than(minimum_coverage: 30)
+  #       slather.notify_if_new_file_is_less_than(minimum_coverage: 70)
   #       slather.show_coverage
   #
   # @see  BrunoMazzo/danger-slather
@@ -69,12 +70,39 @@ module Danger
       end
     end
 
-    # Method to check if the coverage of modified files is at least a minumum
+    # Method to check if the coverage of modified files is increaded by given percent at least a minumum
     # @param options [Hash] a hash with the options
     # @option options [Float] :minimum_coverage the minimum code coverage required for a file
     # @option options [Symbol] :notify_level the level of notification
     # @return [Array<String>]
     def notify_if_modified_file_is_less_than(options)
+      minimum_coverage = options[:minimum_coverage]
+      notify_level = options[:notify_level] || :fail
+
+      if all_modified_files_coverage.count > 0
+        files_to_notify = all_modified_files_coverage.select do |file|
+          file.percentage_lines_tested < minimum_coverage
+        end
+        notify_messages = files_to_notify.map do |file|
+          "#{file.source_file_pathname_relative_to_repo_root} has less than #{minimum_coverage}% code coverage"
+        end
+
+        notify_messages.each do |message|
+          if notify_level == :fail
+            fail message
+          else
+            warn message
+          end
+        end
+      end
+    end
+
+    # Method to check if the coverage of added files is at least a minumum
+    # @param options [Hash] a hash with the options
+    # @option options [Float] :minimum_coverage the minimum code coverage required for a file
+    # @option options [Symbol] :notify_level the level of notification
+    # @return [Array<String>]
+    def notify_if_new_file_is_less_than(options)
       minimum_coverage = options[:minimum_coverage]
       notify_level = options[:notify_level] || :fail
 
@@ -112,15 +140,15 @@ module Danger
       end
     end
 
-    # Build a coverage markdown table of the modified files coverage
+    # Build a coverage markdown table of the changed files coverage
     # @return [String]
-    def modified_files_coverage_table
+    def changed_files_coverage_table
       unless @project.nil?
         line = ''
-        if all_modified_files_coverage.count > 0
+        if all_changed_files_coverage.count > 0
           line << "File | Coverage\n"
           line << "-----|-----\n"
-          all_modified_files_coverage.each do |coverage_file|
+          all_changed_files_coverage.each do |coverage_file|
             file_name = coverage_file.source_file_pathname_relative_to_repo_root.to_s
             percentage = @project.decimal_f([coverage_file.percentage_lines_tested])
             line << "#{file_name} | **`#{percentage}%`**\n"
@@ -130,11 +158,11 @@ module Danger
       end
     end
 
-    # Show the table build by modified_files_coverage_table
+    # Show the table build by changed_files_coverage_table
     # @return [Array<String>]
-    def show_modified_files_coverage
+    def show_changed_files_coverage
       unless @project.nil?
-        markdown modified_files_coverage_table
+        markdown changed_files_coverage_table
       end
     end
 
@@ -144,9 +172,26 @@ module Danger
       unless @project.nil?
         line = "## Code coverage\n"
         line << total_coverage_markdown
-        line << modified_files_coverage_table
+        line << changed_files_coverage_table
         line << '> Powered by [Slather](https://github.com/SlatherOrg/slather)'
         markdown line
+      end
+    end
+
+    # Array of files that we have coverage information and was modified or added
+    # @return [Array<File>]
+    def all_changed_files_coverage
+      unless @project.nil?
+        all_changed_files_coverage ||= begin
+          modified_files = git.modified_files.nil? ? [] : git.modified_files
+          added_files = git.added_files.nil? ? [] : git.added_files
+          all_changed_files = modified_files | added_files
+          @project.coverage_files.select do |file|
+            all_changed_files.include? file.source_file_pathname_relative_to_repo_root.to_s
+          end
+        end
+
+        all_changed_files_coverage
       end
     end
 
@@ -156,10 +201,8 @@ module Danger
       unless @project.nil?
         all_modified_files_coverage ||= begin
           modified_files = git.modified_files.nil? ? [] : git.modified_files
-          added_files = git.added_files.nil? ? [] : git.added_files
-          all_changed_files = modified_files | added_files
           @project.coverage_files.select do |file|
-            all_changed_files.include? file.source_file_pathname_relative_to_repo_root.to_s
+            modified_files.include? file.source_file_pathname_relative_to_repo_root.to_s
           end
         end
 
@@ -167,6 +210,21 @@ module Danger
       end
     end
 
-    private :all_modified_files_coverage, :total_coverage_markdown
+    # Array of added files that we have coverage information
+    # @return [Array<File>]
+    def all_added_files_coverage
+      unless @project.nil?
+        all_added_files_coverage ||= begin
+          added_files = git.added_files.nil? ? [] : git.added_files
+          @project.coverage_files.select do |file|
+            added_files.include? file.source_file_pathname_relative_to_repo_root.to_s
+          end
+        end
+
+        all_added_files_coverage
+      end
+    end
+
+    private :all_modified_files_coverage, all_changed_files_coverage, all_added_files_coverage, :total_coverage_markdown
   end
 end
